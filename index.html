@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Grocery Flow v7</title>
+    <title>Grocery Flow v8</title>
     
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -86,7 +86,7 @@
         let appData = loadData();
 
         function loadData() {
-            let saved = localStorage.getItem('grocery_pro_v6'); // Kept key for compatibility
+            let saved = localStorage.getItem('grocery_pro_v6'); 
             if (!saved) return JSON.parse(JSON.stringify(DEFAULTS));
             try {
                 let parsed = JSON.parse(saved);
@@ -372,13 +372,36 @@
             `;
         }
 
+        // --- UPDATED STORE REMOVAL LOGIC ---
         function addStore() {
             let s = prompt("Store name:");
             if (s && !appData.stores.includes(s)) { appData.stores.push(s); sync(); }
         }
+
         function removeStore(s) {
-            if (confirm(`Remove ${s}?`)) { appData.stores = appData.stores.filter(x => x !== s); sync(); }
+            if (confirm(`Remove ${s}? This will also delete aisle info for this store from all items.`)) { 
+                // 1. Remove from global store list
+                appData.stores = appData.stores.filter(x => x !== s); 
+                
+                // 2. Remove reference from all individual items
+                appData.items.forEach(item => {
+                    if (item.stores && item.stores.hasOwnProperty(s)) {
+                        delete item.stores[s];
+                    }
+                });
+
+                // 3. Update active state if we deleted the currently selected shop
+                if (state.shopStore === s) {
+                    state.shopStore = appData.stores[0] || '';
+                }
+                if (state.planStore === s) {
+                    state.planStore = 'All Stores';
+                }
+
+                sync(); 
+            }
         }
+
         function exportData() {
             let blob = new Blob([JSON.stringify(appData)], {type:'application/json'});
             let a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `grocery_backup.json`; a.click();
