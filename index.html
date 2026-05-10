@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Grocery Flow v8</title>
+    <title>Grocery Flow v9</title>
     
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -354,8 +354,11 @@
                         <div class="space-y-2">
                             ${appData.stores.map(s => `
                                 <div class="flex justify-between items-center p-2 bg-slate-50 rounded-lg">
-                                    <span class="font-medium">${s}</span>
-                                    <button onclick="removeStore('${s}')" class="text-red-300 p-2"><i class="fa-solid fa-trash text-sm"></i></button>
+                                    <span class="font-medium flex-1">${s}</span>
+                                    <div class="flex gap-1">
+                                        <button onclick="editStore('${s}')" class="text-blue-400 p-2"><i class="fa-solid fa-pen text-sm"></i></button>
+                                        <button onclick="removeStore('${s}')" class="text-red-300 p-2"><i class="fa-solid fa-trash text-sm"></i></button>
+                                    </div>
                                 </div>
                             `).join('')}
                         </div>
@@ -372,32 +375,47 @@
             `;
         }
 
-        // --- UPDATED STORE REMOVAL LOGIC ---
+        // --- STORE MANAGEMENT ---
         function addStore() {
             let s = prompt("Store name:");
             if (s && !appData.stores.includes(s)) { appData.stores.push(s); sync(); }
         }
 
+        function editStore(oldName) {
+            let newName = prompt("Rename store:", oldName);
+            if (!newName || newName === oldName) return;
+            if (appData.stores.includes(newName)) {
+                alert("A store with this name already exists.");
+                return;
+            }
+
+            // 1. Update global list
+            const index = appData.stores.indexOf(oldName);
+            if (index !== -1) appData.stores[index] = newName;
+
+            // 2. Cascade rename to all items
+            appData.items.forEach(item => {
+                if (item.stores && item.stores.hasOwnProperty(oldName)) {
+                    item.stores[newName] = item.stores[oldName];
+                    delete item.stores[oldName];
+                }
+            });
+
+            // 3. Update active state if needed
+            if (state.shopStore === oldName) state.shopStore = newName;
+            if (state.planStore === oldName) state.planStore = newName;
+
+            sync();
+        }
+
         function removeStore(s) {
             if (confirm(`Remove ${s}? This will also delete aisle info for this store from all items.`)) { 
-                // 1. Remove from global store list
                 appData.stores = appData.stores.filter(x => x !== s); 
-                
-                // 2. Remove reference from all individual items
                 appData.items.forEach(item => {
-                    if (item.stores && item.stores.hasOwnProperty(s)) {
-                        delete item.stores[s];
-                    }
+                    if (item.stores && item.stores.hasOwnProperty(s)) delete item.stores[s];
                 });
-
-                // 3. Update active state if we deleted the currently selected shop
-                if (state.shopStore === s) {
-                    state.shopStore = appData.stores[0] || '';
-                }
-                if (state.planStore === s) {
-                    state.planStore = 'All Stores';
-                }
-
+                if (state.shopStore === s) state.shopStore = appData.stores[0] || '';
+                if (state.planStore === s) state.planStore = 'All Stores';
                 sync(); 
             }
         }
