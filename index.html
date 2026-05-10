@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Grocery Flow v6</title>
+    <title>Grocery Flow v7</title>
     
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -19,7 +19,6 @@
         .modal-active { display: flex !important; }
         input, select { font-size: 16px !important; } 
         ::-webkit-scrollbar { display: none; }
-        .sticky-sub-header { position: sticky; top: 104px; z-index: 20; }
     </style>
 </head>
 <body class="bg-slate-100 min-h-screen">
@@ -87,7 +86,7 @@
         let appData = loadData();
 
         function loadData() {
-            let saved = localStorage.getItem('grocery_pro_v6');
+            let saved = localStorage.getItem('grocery_pro_v6'); // Kept key for compatibility
             if (!saved) return JSON.parse(JSON.stringify(DEFAULTS));
             try {
                 let parsed = JSON.parse(saved);
@@ -110,7 +109,7 @@
             shopStore: appData.stores[0] || '',
             planStore: 'All Stores',
             searchQuery: '',
-            sortMode: 'category' // 'category' or 'alpha'
+            sortMode: 'category'
         };
 
         function switchTab(tab) {
@@ -122,7 +121,26 @@
             render();
         }
 
-        // --- LOGIC ---
+        // --- SEARCH HELPERS ---
+        function clearSearch() {
+            state.searchQuery = '';
+            const input = document.getElementById('search-input');
+            if (input) {
+                input.value = '';
+                input.focus();
+            }
+            toggleClearBtn();
+            renderPlanningList();
+        }
+
+        function toggleClearBtn() {
+            const btn = document.getElementById('clear-search');
+            if (btn) {
+                btn.classList.toggle('hidden', state.searchQuery.length === 0);
+            }
+        }
+
+        // --- CORE LOGIC ---
         function handlePlanClick(id) {
             const item = appData.items.find(i => i.id === id);
             if (item.needed && !item.bought) {
@@ -201,23 +219,6 @@
             closeModal();
             sync();
         }
-        function clearSearch() {
-    state.searchQuery = '';
-    const input = document.getElementById('search-input');
-    if (input) {
-        input.value = '';
-        input.focus();
-    }
-    toggleClearBtn();
-    renderPlanningList();
-}
-
-function toggleClearBtn() {
-    const btn = document.getElementById('clear-search');
-    if (btn) {
-        btn.classList.toggle('hidden', state.searchQuery.length === 0);
-    }
-}
 
         // --- RENDERERS ---
         function render() {
@@ -227,12 +228,14 @@ function toggleClearBtn() {
             if (state.currentTab === 'planning') {
                 container.innerHTML = `
                     <div class="sticky top-[100px] bg-slate-100 pb-4 z-20 space-y-2">
-                        <div class="relative shadow-sm">
-                            <i class="fa-solid fa-magnifying-glass absolute left-4 top-4 text-slate-300"></i>
-                            <input type="text" id="search-input" value="${state.searchQuery}" oninput="state.searchQuery=this.value; renderPlanningList()" 
-                                class="w-full p-3.5 pl-12 rounded-2xl border-none outline-none" placeholder="Search my items...">
+                        <div class="relative shadow-sm flex items-center">
+                            <i class="fa-solid fa-magnifying-glass absolute left-4 text-slate-300"></i>
+                            <input type="text" id="search-input" value="${state.searchQuery}" 
+                                oninput="state.searchQuery=this.value; renderPlanningList(); toggleClearBtn()" 
+                                class="w-full p-3.5 pl-12 pr-10 rounded-2xl border-none outline-none" 
+                                placeholder="Search my items...">
                             <button id="clear-search" onclick="clearSearch()" 
-                                class="${state.searchQuery ? '' : 'hidden'} absolute right-4 top-4 text-slate-400">
+                                class="${state.searchQuery ? '' : 'hidden'} absolute right-4 text-slate-400 p-1">
                                 <i class="fa-solid fa-circle-xmark"></i>
                             </button>
                         </div>
@@ -260,10 +263,10 @@ function toggleClearBtn() {
 
         function renderPlanningList() {
             const listDiv = document.getElementById('p-list');
+            if(!listDiv) return;
             listDiv.innerHTML = '';
             const q = state.searchQuery.toLowerCase();
             
-            // Filter 1: Search and Store
             let filtered = appData.items.filter(i => {
                 const matchesSearch = i.name.toLowerCase().includes(q);
                 const matchesStore = state.planStore === 'All Stores' || (i.stores && i.stores.hasOwnProperty(state.planStore));
@@ -271,11 +274,9 @@ function toggleClearBtn() {
             });
 
             if (state.sortMode === 'alpha') {
-                // Alphabetical sorting (Active first, then Striked)
                 filtered.sort((a, b) => a.name.localeCompare(b.name));
                 const active = filtered.filter(i => i.needed && !i.bought);
                 const striked = filtered.filter(i => !i.needed || i.bought);
-                
                 if(active.length > 0) {
                     listDiv.innerHTML += `<h3 class="text-[10px] font-black text-slate-400 uppercase mb-2 ml-1">To Buy</h3>`;
                     active.forEach(item => listDiv.innerHTML += renderItemHTML(item));
@@ -285,7 +286,6 @@ function toggleClearBtn() {
                     striked.forEach(item => listDiv.innerHTML += renderItemHTML(item));
                 }
             } else {
-                // Categorized sorting
                 appData.categories.forEach(cat => {
                     const catItems = filtered.filter(i => (i.category || 'Other') === cat);
                     if (catItems.length === 0) return;
