@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Grocery Flow v10</title>
+    <title>Grocery Flow v11</title>
     
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -15,7 +15,6 @@
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
         body { font-family: 'Inter', sans-serif; -webkit-tap-highlight-color: transparent; overscroll-behavior: none; }
         
-        /* High Density Tweaks */
         .strikethrough { opacity: 0.25; filter: grayscale(1); }
         .strikethrough p { text-decoration: line-through; }
         
@@ -24,9 +23,12 @@
         input, select { font-size: 16px !important; } 
         ::-webkit-scrollbar { display: none; }
 
-        /* Compact Header Adjustment */
-        header { height: 90px; }
-        main { padding-top: 10px; }
+        /* Animation for Undo Snackbar */
+        @keyframes slideUp {
+            from { transform: translateY(100%); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        .animate-slide-up { animation: slideUp 0.3s ease-out; }
     </style>
 </head>
 <body class="bg-slate-50 min-h-screen">
@@ -44,27 +46,34 @@
     </header>
 
     <main id="app-content" class="p-2 pb-32">
-        <!-- JS will inject content here -->
+        <!-- Content injected here -->
     </main>
 
-    <!-- SLIM FLOATING ADD BUTTON -->
+    <!-- UNDO SNACKBAR -->
+    <div id="snackbar" class="hidden fixed bottom-20 left-4 right-4 z-40 animate-slide-up">
+        <div class="bg-slate-800 text-white px-4 py-3 rounded-xl shadow-2xl flex justify-between items-center">
+            <span id="snackbar-msg" class="text-sm font-medium">Action completed</span>
+            <button onclick="undoLastAction()" class="text-blue-400 font-bold text-sm uppercase tracking-wider ml-4">Undo</button>
+        </div>
+    </div>
+
+    <!-- FLOATING ADD BUTTON -->
     <button id="fab" onclick="openEditModal()" class="fixed bottom-6 right-6 bg-blue-600 text-white w-12 h-12 rounded-full shadow-lg flex items-center justify-center text-xl z-20 active:scale-90 transition-transform">
         <i class="fa-solid fa-plus"></i>
     </button>
 
-    <!-- EDIT/ADD MODAL -->
+    <!-- EDIT/ADD MODAL (Same as v10) -->
     <div id="edit-modal" class="hidden fixed inset-0 bg-black/60 z-50 items-center justify-center p-4 backdrop-blur-sm">
         <div class="bg-white w-full max-w-md rounded-2xl p-5 shadow-2xl max-h-[90vh] overflow-y-auto">
             <div class="flex justify-between items-center mb-4">
                 <h2 id="modal-title" class="text-lg font-bold">Item Details</h2>
                 <button onclick="closeModal()" class="text-slate-400 text-2xl px-2">&times;</button>
             </div>
-            
             <input type="hidden" id="edit-id">
-            <div class="space-y-3">
+            <div class="space-y-3 text-left">
                 <div>
                     <label class="text-[10px] font-bold text-slate-400 uppercase">Item Name</label>
-                    <input id="edit-name" type="text" class="w-full border p-2 rounded-lg outline-none focus:border-blue-500 bg-slate-50" placeholder="e.g. Milk">
+                    <input id="edit-name" type="text" class="w-full border p-2 rounded-lg outline-none focus:border-blue-500 bg-slate-50">
                 </div>
                 <div>
                     <label class="text-[10px] font-bold text-slate-400 uppercase">Category</label>
@@ -84,7 +93,7 @@
     </div>
 
     <script>
-        // --- DATA ENGINE ---
+        // --- DATA ---
         const DEFAULTS = {
             items: [],
             stores: ["Walmart", "Sams Club"],
@@ -92,17 +101,15 @@
         };
 
         let appData = loadData();
+        let lastAction = null; // Store for Undo
+        let snackbarTimeout = null;
 
         function loadData() {
             let saved = localStorage.getItem('grocery_pro_v6'); 
             if (!saved) return JSON.parse(JSON.stringify(DEFAULTS));
             try {
                 let parsed = JSON.parse(saved);
-                return {
-                    items: parsed.items || [],
-                    stores: parsed.stores || DEFAULTS.stores,
-                    categories: parsed.categories || DEFAULTS.categories
-                };
+                return { items: parsed.items || [], stores: parsed.stores || DEFAULTS.stores, categories: parsed.categories || DEFAULTS.categories };
             } catch(e) { return JSON.parse(JSON.stringify(DEFAULTS)); }
         }
 
@@ -129,89 +136,53 @@
             render();
         }
 
-        // --- HELPERS ---
-        function clearSearch() {
-            state.searchQuery = '';
-            const input = document.getElementById('search-input');
-            if (input) { input.value = ''; input.focus(); }
-            renderPlanningList();
+        // --- UNDO SYSTEM ---
+        function showUndoSnackbar(msg, itemBefore) {
+            lastAction = JSON.parse(JSON.stringify(itemBefore));
+            const bar = document.getElementById('snackbar');
+            document.getElementById('snackbar-msg').innerText = msg;
+            bar.classList.remove('hidden');
+            
+            clearTimeout(snackbarTimeout);
+            snackbarTimeout = setTimeout(() => {
+                bar.classList.add('hidden');
+                lastAction = null;
+            }, 5000);
         }
 
+        function undoLastAction() {
+            if (!lastAction) return;
+            const itemIdx = appData.items.findIndex(i => i.id === lastAction.id);
+            if (itemIdx !== -1) {
+                appData.items[itemIdx] = lastAction;
+                lastAction = null;
+                document.getElementById('snackbar').classList.add('hidden');
+                sync();
+            }
+        }
+
+        // --- CORE LOGIC ---
         function handlePlanClick(id) {
             const item = appData.items.find(i => i.id === id);
+            const itemCopy = JSON.parse(JSON.stringify(item));
+            
             if (item.needed && !item.bought) {
                 item.needed = false;
                 item.bought = false;
+                showUndoSnackbar(`Removed ${item.name}`, itemCopy);
             } else {
                 item.needed = true;
                 item.bought = false;
+                showUndoSnackbar(`Added ${item.name}`, itemCopy);
             }
             sync();
         }
 
         function markBought(id) {
-            appData.items.find(i => i.id === id).bought = true;
-            sync();
-        }
-
-        // --- MODAL ---
-        function openEditModal(id = null) {
-            const modal = document.getElementById('edit-modal');
-            document.getElementById('edit-category').innerHTML = appData.categories.map(c => `<option value="${c}">${c}</option>`).join('');
-            document.getElementById('modal-stores-list').innerHTML = appData.stores.map(s => `
-                <div class="flex items-center gap-2 bg-slate-50 p-1.5 rounded border border-slate-200">
-                    <input type="checkbox" id="check-${s}" class="w-4 h-4">
-                    <span class="flex-1 text-xs font-semibold text-slate-600">${s}</span>
-                    <input id="aisle-${s}" type="text" class="w-16 p-1 border rounded text-center text-xs" placeholder="Aisle">
-                </div>
-            `).join('');
-
-            if (id) {
-                const item = appData.items.find(i => i.id == id);
-                document.getElementById('edit-id').value = item.id;
-                document.getElementById('edit-name').value = item.name;
-                document.getElementById('edit-category').value = item.category || "Other";
-                appData.stores.forEach(s => {
-                    if (item.stores && item.stores[s] !== undefined) {
-                        document.getElementById(`check-${s}`).checked = true;
-                        document.getElementById(`aisle-${s}`).value = item.stores[s] || '';
-                    }
-                });
-                document.getElementById('delete-btn').classList.remove('hidden');
-            } else {
-                document.getElementById('edit-id').value = '';
-                document.getElementById('edit-name').value = '';
-                document.getElementById('delete-btn').classList.add('hidden');
-            }
-            modal.classList.add('modal-active');
-        }
-
-        function closeModal() { document.getElementById('edit-modal').classList.remove('modal-active'); }
-
-        function saveItem() {
-            const id = document.getElementById('edit-id').value;
-            const name = document.getElementById('edit-name').value;
-            if (!name) return;
-            const storesObj = {};
-            appData.stores.forEach(s => {
-                if (document.getElementById(`check-${s}`).checked) {
-                    storesObj[s] = document.getElementById(`aisle-${s}`).value;
-                }
-            });
-            if (id) {
-                let idx = appData.items.findIndex(i => i.id == id);
-                appData.items[idx] = { ...appData.items[idx], name, category: document.getElementById('edit-category').value, stores: storesObj };
-            } else {
-                appData.items.push({ id: Date.now(), name, category: document.getElementById('edit-category').value, needed: true, bought: false, stores: storesObj });
-            }
-            closeModal();
-            sync();
-        }
-
-        function deleteItem() {
-            if(!confirm("Delete forever?")) return;
-            appData.items = appData.items.filter(i => i.id != document.getElementById('edit-id').value);
-            closeModal();
+            const item = appData.items.find(i => i.id === id);
+            const itemCopy = JSON.parse(JSON.stringify(item));
+            item.bought = true;
+            showUndoSnackbar(`Bought ${item.name}`, itemCopy);
             sync();
         }
 
@@ -225,10 +196,9 @@
                     <div class="sticky top-[80px] bg-slate-50 pb-2 z-20 space-y-1.5">
                         <div class="relative">
                             <i class="fa-solid fa-magnifying-glass absolute left-3 top-2.5 text-slate-300 text-sm"></i>
-                            <input type="text" id="search-input" value="${state.searchQuery}" 
-                                oninput="state.searchQuery=this.value; renderPlanningList()" 
+                            <input type="text" id="search-input" value="${state.searchQuery}" oninput="state.searchQuery=this.value; renderPlanningList()" 
                                 class="w-full p-2 pl-9 pr-8 rounded-lg border-none shadow-sm outline-none text-sm" placeholder="Search...">
-                            <button onclick="clearSearch()" class="${state.searchQuery ? '' : 'hidden'} absolute right-3 top-2.5 text-slate-300">
+                            <button onclick="state.searchQuery=''; render();" class="${state.searchQuery ? '' : 'hidden'} absolute right-3 top-2.5 text-slate-300">
                                 <i class="fa-solid fa-circle-xmark"></i>
                             </button>
                         </div>
@@ -259,7 +229,6 @@
             if(!listDiv) return;
             listDiv.innerHTML = '';
             const q = state.searchQuery.toLowerCase();
-            
             let filtered = appData.items.filter(i => {
                 const matchesSearch = i.name.toLowerCase().includes(q);
                 const matchesStore = state.planStore === 'All Stores' || (i.stores && i.stores.hasOwnProperty(state.planStore));
@@ -267,8 +236,7 @@
             });
 
             if (state.sortMode === 'alpha') {
-                filtered.sort((a, b) => a.name.localeCompare(b.name));
-                filtered.forEach(item => listDiv.innerHTML += renderItemHTML(item));
+                filtered.sort((a, b) => a.name.localeCompare(b.name)).forEach(item => listDiv.innerHTML += renderItemHTML(item));
             } else {
                 appData.categories.forEach(cat => {
                     const catItems = filtered.filter(i => (i.category || 'Other') === cat);
@@ -287,14 +255,12 @@
                         <p class="font-semibold text-sm text-slate-700 truncate">${item.name}</p>
                         <p class="text-[9px] text-slate-400 truncate">${Object.keys(item.stores).join(' • ')}</p>
                     </div>
-                    <button onclick="openEditModal(${item.id})" class="text-slate-300 p-2">
-                        <i class="fa-solid fa-pen text-[10px]"></i>
-                    </button>
+                    <button onclick="openEditModal(${item.id})" class="text-slate-300 p-2"><i class="fa-solid fa-pen text-[10px]"></i></button>
                 </div>
             `;
         }
 
-        // --- RENDER SHOPPING ---
+        // --- SHOPPING & SETTINGS (Condensed from v10) ---
         function renderShoppingView(container) {
             container.innerHTML = `
                 <select onchange="state.shopStore=this.value; render()" class="w-full mb-3 p-3 rounded-lg shadow-sm border-none font-bold text-blue-600 bg-white text-sm">
@@ -304,15 +270,7 @@
             `;
             document.getElementById('store-indicator').innerText = state.shopStore;
             let shopItems = appData.items.filter(i => i.needed && !i.bought && i.stores && i.stores.hasOwnProperty(state.shopStore));
-            
-            shopItems.sort((a, b) => {
-                let aA = a.stores[state.shopStore] || '';
-                let bA = b.stores[state.shopStore] || '';
-                if (aA === '' && bA !== '') return -1;
-                if (aA !== '' && bA === '') return 1;
-                return aA.localeCompare(bA, undefined, {numeric: true});
-            });
-
+            shopItems.sort((a, b) => (a.stores[state.shopStore] || '').localeCompare(b.stores[state.shopStore] || '', undefined, {numeric: true}));
             const sList = document.getElementById('s-list');
             shopItems.forEach(item => {
                 const el = document.createElement('div');
@@ -326,82 +284,56 @@
                 `;
                 sList.appendChild(el);
             });
-            if (shopItems.length === 0) sList.innerHTML = `<div class="text-center py-12 text-slate-400 text-xs font-medium">Store Complete!</div>`;
+            if (shopItems.length === 0) sList.innerHTML = `<div class="text-center py-12 text-slate-400 text-xs font-medium">No items left!</div>`;
         }
 
-        // --- RENDER SETTINGS ---
         function renderSettingsView(container) {
             container.innerHTML = `
                 <div class="space-y-4">
                     <section class="bg-white p-3 rounded-xl shadow-sm border border-slate-200">
-                        <div class="flex justify-between items-center mb-3">
-                            <h3 class="font-bold text-sm">My Stores</h3>
-                            <button onclick="addStore()" class="text-blue-600 text-xs font-bold">+ Add Store</button>
-                        </div>
+                        <div class="flex justify-between items-center mb-3 text-sm font-bold">My Stores <button onclick="addStore()" class="text-blue-600 text-xs">+ Add Store</button></div>
                         <div class="space-y-1">
-                            ${appData.stores.map(s => `
-                                <div class="flex justify-between items-center p-2 bg-slate-50 rounded border border-slate-100">
-                                    <span class="font-semibold text-xs text-slate-600 flex-1">${s}</span>
-                                    <div class="flex">
-                                        <button onclick="editStore('${s}')" class="text-slate-400 p-2"><i class="fa-solid fa-pen text-[10px]"></i></button>
-                                        <button onclick="removeStore('${s}')" class="text-red-300 p-2"><i class="fa-solid fa-trash text-[10px]"></i></button>
-                                    </div>
-                                </div>
-                            `).join('')}
+                            ${appData.stores.map(s => `<div class="flex justify-between items-center p-2 bg-slate-50 rounded border border-slate-100 text-xs font-semibold text-slate-600"><span>${s}</span><div class="flex"><button onclick="editStore('${s}')" class="text-slate-400 p-2"><i class="fa-solid fa-pen text-[10px]"></i></button><button onclick="removeStore('${s}')" class="text-red-300 p-2"><i class="fa-solid fa-trash text-[10px]"></i></button></div></div>`).join('')}
                         </div>
                     </section>
-                    <div class="grid grid-cols-2 gap-2">
-                        <button onclick="exportData()" class="bg-white p-3 rounded-xl shadow-sm font-bold text-slate-500 border border-slate-200 text-[10px]">Export</button>
-                        <label class="bg-white p-3 rounded-xl shadow-sm font-bold text-slate-500 text-center border border-slate-200 cursor-pointer text-[10px]">
-                            Import
-                            <input type="file" class="hidden" onchange="importData(event)">
-                        </label>
-                    </div>
-                    <button onclick="if(confirm('Reset all?')) {appData=JSON.parse(JSON.stringify(DEFAULTS)); sync();}" class="w-full text-red-300 text-[9px] font-black uppercase py-8 tracking-widest">Reset Application</button>
+                    <div class="grid grid-cols-2 gap-2"><button onclick="exportData()" class="bg-white p-3 rounded-xl shadow-sm font-bold text-slate-500 border border-slate-200 text-[10px]">Export</button><label class="bg-white p-3 rounded-xl shadow-sm font-bold text-slate-500 text-center border border-slate-200 text-[10px]">Import<input type="file" class="hidden" onchange="importData(event)"></label></div>
+                    <button onclick="if(confirm('Wipe all data?')) {appData=JSON.parse(JSON.stringify(DEFAULTS)); sync();}" class="w-full text-red-300 text-[9px] font-black uppercase py-8 tracking-widest">Reset Application</button>
                 </div>
             `;
         }
 
-        // --- STORE LOGIC ---
-        function addStore() {
-            let s = prompt("Store name:");
-            if (s && !appData.stores.includes(s)) { appData.stores.push(s); sync(); }
-        }
-        function editStore(oldName) {
-            let newName = prompt("Rename store:", oldName);
-            if (!newName || newName === oldName) return;
-            const index = appData.stores.indexOf(oldName);
-            if (index !== -1) appData.stores[index] = newName;
-            appData.items.forEach(item => {
-                if (item.stores && item.stores.hasOwnProperty(oldName)) {
-                    item.stores[newName] = item.stores[oldName];
-                    delete item.stores[oldName];
-                }
-            });
-            if (state.shopStore === oldName) state.shopStore = newName;
-            sync();
-        }
-        function removeStore(s) {
-            if (confirm(`Delete ${s}?`)) { 
-                appData.stores = appData.stores.filter(x => x !== s); 
-                appData.items.forEach(item => { if (item.stores) delete item.stores[s]; });
-                if (state.shopStore === s) state.shopStore = appData.stores[0] || '';
-                sync(); 
+        // --- STORE & MODAL HELPERS ---
+        function openEditModal(id = null) {
+            const modal = document.getElementById('edit-modal');
+            document.getElementById('edit-category').innerHTML = appData.categories.map(c => `<option value="${c}">${c}</option>`).join('');
+            document.getElementById('modal-stores-list').innerHTML = appData.stores.map(s => `<div class="flex items-center gap-2 bg-slate-50 p-1.5 rounded border border-slate-200"><input type="checkbox" id="check-${s}" class="w-4 h-4"><span class="flex-1 text-xs font-semibold text-slate-600">${s}</span><input id="aisle-${s}" type="text" class="w-16 p-1 border rounded text-center text-xs" placeholder="Aisle"></div>`).join('');
+            if (id) {
+                const item = appData.items.find(i => i.id == id);
+                document.getElementById('edit-id').value = item.id;
+                document.getElementById('edit-name').value = item.name;
+                document.getElementById('edit-category').value = item.category || "Other";
+                appData.stores.forEach(s => { if (item.stores && item.stores[s] !== undefined) { document.getElementById(`check-${s}`).checked = true; document.getElementById(`aisle-${s}`).value = item.stores[s] || ''; }});
+                document.getElementById('delete-btn').classList.remove('hidden');
+            } else {
+                document.getElementById('edit-id').value = ''; document.getElementById('edit-name').value = ''; document.getElementById('delete-btn').classList.add('hidden');
             }
+            modal.classList.add('modal-active');
         }
-        function exportData() {
-            let blob = new Blob([JSON.stringify(appData)], {type:'application/json'});
-            let a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `grocery_backup.json`; a.click();
+        function closeModal() { document.getElementById('edit-modal').classList.remove('modal-active'); }
+        function saveItem() {
+            const id = document.getElementById('edit-id').value; const name = document.getElementById('edit-name').value;
+            if (!name) return; const storesObj = {};
+            appData.stores.forEach(s => { if (document.getElementById(`check-${s}`).checked) storesObj[s] = document.getElementById(`aisle-${s}`).value; });
+            if (id) { let idx = appData.items.findIndex(i => i.id == id); appData.items[idx] = { ...appData.items[idx], name, category: document.getElementById('edit-category').value, stores: storesObj }; }
+            else { appData.items.push({ id: Date.now(), name, category: document.getElementById('edit-category').value, needed: true, bought: false, stores: storesObj }); }
+            closeModal(); sync();
         }
-        function importData(e) {
-            let reader = new FileReader();
-            reader.onload = (ev) => {
-                let incoming = JSON.parse(ev.target.result);
-                appData = { items: incoming.items || [], stores: incoming.stores || DEFAULTS.stores, categories: incoming.categories || DEFAULTS.categories };
-                sync();
-            };
-            reader.readAsText(e.target.files[0]);
-        }
+        function deleteItem() { if(!confirm("Delete forever?")) return; appData.items = appData.items.filter(i => i.id != document.getElementById('edit-id').value); closeModal(); sync(); }
+        function addStore() { let s = prompt("Store name:"); if (s && !appData.stores.includes(s)) { appData.stores.push(s); sync(); }}
+        function editStore(oldName) { let n = prompt("Rename:", oldName); if (!n || n === oldName) return; appData.stores[appData.stores.indexOf(oldName)] = n; appData.items.forEach(i => { if (i.stores && i.stores[oldName]) { i.stores[n] = i.stores[oldName]; delete i.stores[oldName]; }}); sync(); }
+        function removeStore(s) { if (confirm(`Delete ${s}?`)) { appData.stores = appData.stores.filter(x => x !== s); appData.items.forEach(i => { if (i.stores) delete i.stores[s]; }); sync(); }}
+        function exportData() { let blob = new Blob([JSON.stringify(appData)], {type:'application/json'}); let a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `grocery_backup.json`; a.click(); }
+        function importData(e) { let r = new FileReader(); r.onload = (ev) => { let i = JSON.parse(ev.target.result); appData = { items: i.items || [], stores: i.stores || DEFAULTS.stores, categories: i.categories || DEFAULTS.categories }; sync(); }; r.readAsText(e.target.files[0]); }
 
         render();
     </script>
