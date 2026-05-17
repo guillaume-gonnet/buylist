@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Grocery Flow v11</title>
+    <title>Grocery Flow v13</title>
     
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -14,20 +14,12 @@
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
         body { font-family: 'Inter', sans-serif; -webkit-tap-highlight-color: transparent; overscroll-behavior: none; }
-        
         .strikethrough { opacity: 0.25; filter: grayscale(1); }
         .strikethrough p { text-decoration: line-through; }
-        
         .tab-active { border-bottom: 2px solid #3b82f6; color: #3b82f6; background: #f8fafc; }
         .modal-active { display: flex !important; }
-        input, select { font-size: 16px !important; } 
         ::-webkit-scrollbar { display: none; }
-
-        /* Animation for Undo Snackbar */
-        @keyframes slideUp {
-            from { transform: translateY(100%); opacity: 0; }
-            to { transform: translateY(0); opacity: 1; }
-        }
+        @keyframes slideUp { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
         .animate-slide-up { animation: slideUp 0.3s ease-out; }
     </style>
 </head>
@@ -35,7 +27,7 @@
 
     <header class="bg-white shadow-sm sticky top-0 z-30">
         <div class="px-4 pt-2 flex justify-between items-center">
-            <h1 class="text-lg font-bold text-slate-800">GroceryFlow</h1>
+            <h1 class="text-lg font-bold text-slate-800 tracking-tight">GroceryFlow</h1>
             <div id="store-indicator" class="hidden text-[9px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-bold uppercase"></div>
         </div>
         <div class="flex mt-1">
@@ -62,7 +54,7 @@
         <i class="fa-solid fa-plus"></i>
     </button>
 
-    <!-- EDIT/ADD MODAL (Same as v10) -->
+    <!-- MODAL -->
     <div id="edit-modal" class="hidden fixed inset-0 bg-black/60 z-50 items-center justify-center p-4 backdrop-blur-sm">
         <div class="bg-white w-full max-w-md rounded-2xl p-5 shadow-2xl max-h-[90vh] overflow-y-auto">
             <div class="flex justify-between items-center mb-4">
@@ -79,10 +71,7 @@
                     <label class="text-[10px] font-bold text-slate-400 uppercase">Category</label>
                     <select id="edit-category" class="w-full border p-2 rounded-lg bg-slate-50"></select>
                 </div>
-                <div>
-                    <label class="text-[10px] font-bold text-slate-400 uppercase">Aisles per Store</label>
-                    <div id="modal-stores-list" class="space-y-1.5 mt-1"></div>
-                </div>
+                <div id="modal-stores-list" class="space-y-1.5 mt-1"></div>
             </div>
             <div class="flex gap-2 mt-6">
                 <button onclick="closeModal()" class="flex-1 py-2.5 bg-slate-100 rounded-lg font-bold text-slate-600 text-sm">Cancel</button>
@@ -93,24 +82,31 @@
     </div>
 
     <script>
-        // --- DATA ---
+        // --- DATA & MIGRATION ---
         const DEFAULTS = {
             items: [],
             stores: ["Walmart", "Sams Club"],
-            categories: ["Produce", "Meat", "Dairy", "Frozen", "Pantry", "Household", "Other"]
+            categories: ["Weekly", "Fruits and vegetables", "Meat", "Dairy", "Frozen", "Pantry", "Household", "Other"]
         };
 
         let appData = loadData();
-        let lastAction = null; // Store for Undo
+        let lastAction = null;
         let snackbarTimeout = null;
 
         function loadData() {
             let saved = localStorage.getItem('grocery_pro_v6'); 
-            if (!saved) return JSON.parse(JSON.stringify(DEFAULTS));
-            try {
-                let parsed = JSON.parse(saved);
-                return { items: parsed.items || [], stores: parsed.stores || DEFAULTS.stores, categories: parsed.categories || DEFAULTS.categories };
-            } catch(e) { return JSON.parse(JSON.stringify(DEFAULTS)); }
+            let data = saved ? JSON.parse(saved) : JSON.parse(JSON.stringify(DEFAULTS));
+            
+            // Migration Logic
+            data.categories = DEFAULTS.categories;
+            data.items.forEach(item => {
+                // Consolidate all Produce variants into "Fruits and vegetables"
+                if (["Produce", "Fruits", "Vegetables"].includes(item.category)) {
+                    item.category = "Fruits and vegetables";
+                }
+                if (!DEFAULTS.categories.includes(item.category)) item.category = "Other";
+            });
+            return data;
         }
 
         function sync() {
@@ -124,7 +120,8 @@
             shopStore: appData.stores[0] || '',
             planStore: 'All Stores',
             searchQuery: '',
-            sortMode: 'category'
+            groupMode: 'category', // 'category' or 'flat'
+            sortMode: 'status'     // 'status' or 'alpha'
         };
 
         function switchTab(tab) {
@@ -136,112 +133,115 @@
             render();
         }
 
-        // --- UNDO SYSTEM ---
-        function showUndoSnackbar(msg, itemBefore) {
-            lastAction = JSON.parse(JSON.stringify(itemBefore));
-            const bar = document.getElementById('snackbar');
-            document.getElementById('snackbar-msg').innerText = msg;
-            bar.classList.remove('hidden');
-            
-            clearTimeout(snackbarTimeout);
-            snackbarTimeout = setTimeout(() => {
-                bar.classList.add('hidden');
-                lastAction = null;
-            }, 5000);
+        // --- SORTING ENGINE ---
+        function sortItems(arr) {
+            return arr.sort((a, b) => {
+                // Status mode puts "Needed & Not Bought" items at the top of the group
+                if (state.sortMode === 'status') {
+                    const statusA = (a.needed && !a.bought) ? 0 : 1;
+                    const statusB = (b.needed && !b.bought) ? 0 : 1;
+                    if (statusA !== statusB) return statusA - statusB;
+                }
+                return a.name.localeCompare(b.name);
+            });
         }
 
-        function undoLastAction() {
-            if (!lastAction) return;
-            const itemIdx = appData.items.findIndex(i => i.id === lastAction.id);
-            if (itemIdx !== -1) {
-                appData.items[itemIdx] = lastAction;
-                lastAction = null;
-                document.getElementById('snackbar').classList.add('hidden');
-                sync();
-            }
-        }
-
-        // --- CORE LOGIC ---
+        // --- ACTIONS ---
         function handlePlanClick(id) {
             const item = appData.items.find(i => i.id === id);
-            const itemCopy = JSON.parse(JSON.stringify(item));
-            
-            if (item.needed && !item.bought) {
-                item.needed = false;
-                item.bought = false;
-                showUndoSnackbar(`Removed ${item.name}`, itemCopy);
-            } else {
-                item.needed = true;
-                item.bought = false;
-                showUndoSnackbar(`Added ${item.name}`, itemCopy);
+            const copy = JSON.parse(JSON.stringify(item));
+            if (item.needed && !item.bought) { 
+                item.needed = false; item.bought = false; 
+                showUndoSnackbar(`Removed ${item.name}`, copy); 
+            } else { 
+                item.needed = true; item.bought = false; 
+                showUndoSnackbar(`Added ${item.name}`, copy); 
             }
             sync();
         }
 
         function markBought(id) {
             const item = appData.items.find(i => i.id === id);
-            const itemCopy = JSON.parse(JSON.stringify(item));
+            const copy = JSON.parse(JSON.stringify(item));
             item.bought = true;
-            showUndoSnackbar(`Bought ${item.name}`, itemCopy);
+            showUndoSnackbar(`Bought ${item.name}`, copy);
             sync();
         }
 
-        // --- RENDER PLANNING ---
+        function showUndoSnackbar(msg, itemBefore) {
+            lastAction = itemBefore;
+            const bar = document.getElementById('snackbar');
+            document.getElementById('snackbar-msg').innerText = msg;
+            bar.classList.remove('hidden');
+            clearTimeout(snackbarTimeout);
+            snackbarTimeout = setTimeout(() => bar.classList.add('hidden'), 5000);
+        }
+
+        function undoLastAction() {
+            if (!lastAction) return;
+            const idx = appData.items.findIndex(i => i.id === lastAction.id);
+            if (idx !== -1) appData.items[idx] = lastAction;
+            document.getElementById('snackbar').classList.add('hidden');
+            lastAction = null; sync();
+        }
+
+        // --- RENDERERS ---
         function render() {
             const container = document.getElementById('app-content');
             container.innerHTML = '';
+            if (state.currentTab === 'planning') renderPlanning(container);
+            else if (state.currentTab === 'shopping') renderShopping(container);
+            else renderSettings(container);
+        }
 
-            if (state.currentTab === 'planning') {
-                container.innerHTML = `
-                    <div class="sticky top-[80px] bg-slate-50 pb-2 z-20 space-y-1.5">
-                        <div class="relative">
-                            <i class="fa-solid fa-magnifying-glass absolute left-3 top-2.5 text-slate-300 text-sm"></i>
-                            <input type="text" id="search-input" value="${state.searchQuery}" oninput="state.searchQuery=this.value; renderPlanningList()" 
-                                class="w-full p-2 pl-9 pr-8 rounded-lg border-none shadow-sm outline-none text-sm" placeholder="Search...">
-                            <button onclick="state.searchQuery=''; render();" class="${state.searchQuery ? '' : 'hidden'} absolute right-3 top-2.5 text-slate-300">
-                                <i class="fa-solid fa-circle-xmark"></i>
-                            </button>
-                        </div>
-                        <div class="flex gap-1.5">
-                            <select onchange="state.planStore=this.value; renderPlanningList()" class="flex-1 p-1.5 rounded-lg border-none shadow-sm font-bold text-blue-600 bg-white text-[10px]">
-                                <option>All Stores</option>
-                                ${appData.stores.map(s => `<option value="${s}" ${state.planStore===s?'selected':''}>${s}</option>`).join('')}
-                            </select>
-                            <button onclick="state.sortMode = (state.sortMode === 'category' ? 'alpha' : 'category'); renderPlanningList()" 
-                                class="bg-white px-3 py-1.5 rounded-lg shadow-sm font-bold text-[10px] text-slate-500">
-                                <i class="fa-solid ${state.sortMode === 'category' ? 'fa-layer-group' : 'fa-arrow-down-a-z'} mr-1"></i>
-                                ${state.sortMode === 'category' ? 'By Category' : 'A-Z'}
-                            </button>
-                        </div>
+        function renderPlanning(container) {
+            container.innerHTML = `
+                <div class="sticky top-[80px] bg-slate-50 pb-2 z-20 space-y-1.5">
+                    <div class="relative shadow-sm">
+                        <i class="fa-solid fa-magnifying-glass absolute left-3 top-2.5 text-slate-300 text-sm"></i>
+                        <input type="text" id="search-input" value="${state.searchQuery}" oninput="state.searchQuery=this.value; renderPlanningList()" 
+                            class="w-full p-2 pl-9 pr-8 rounded-lg border-none shadow-sm outline-none text-sm" placeholder="Search...">
+                        <button onclick="state.searchQuery=''; render();" class="${state.searchQuery ? '' : 'hidden'} absolute right-3 top-2.5 text-slate-300"><i class="fa-solid fa-circle-xmark"></i></button>
                     </div>
-                    <div id="p-list" class="bg-white rounded-xl shadow-sm overflow-hidden border border-slate-200"></div>
-                `;
-                renderPlanningList();
-            } else if (state.currentTab === 'shopping') {
-                renderShoppingView(container);
-            } else {
-                renderSettingsView(container);
-            }
+                    <div class="grid grid-cols-3 gap-1">
+                        <select onchange="state.planStore=this.value; renderPlanningList()" class="p-1.5 rounded-lg border-none shadow-sm font-bold text-blue-600 bg-white text-[9px]">
+                            <option>All Stores</option>
+                            ${appData.stores.map(s => `<option value="${s}" ${state.planStore===s?'selected':''}>${s}</option>`).join('')}
+                        </select>
+                        <button onclick="state.groupMode = (state.groupMode==='category'?'flat':'category'); render();" class="bg-white p-1.5 rounded-lg shadow-sm font-bold text-[9px] text-slate-500">
+                            ${state.groupMode==='category'?'Categorized':'Flat A-Z'}
+                        </button>
+                        <button onclick="state.sortMode = (state.sortMode==='status'?'alpha':'status'); render();" class="bg-white p-1.5 rounded-lg shadow-sm font-bold text-[9px] text-slate-500">
+                            ${state.sortMode==='status'?'By Status':'By Name'}
+                        </button>
+                    </div>
+                </div>
+                <div id="p-list" class="bg-white rounded-xl shadow-sm overflow-hidden border border-slate-200"></div>
+            `;
+            renderPlanningList();
         }
 
         function renderPlanningList() {
             const listDiv = document.getElementById('p-list');
-            if(!listDiv) return;
             listDiv.innerHTML = '';
             const q = state.searchQuery.toLowerCase();
-            let filtered = appData.items.filter(i => {
-                const matchesSearch = i.name.toLowerCase().includes(q);
-                const matchesStore = state.planStore === 'All Stores' || (i.stores && i.stores.hasOwnProperty(state.planStore));
-                return matchesSearch && matchesStore;
-            });
+            let filtered = appData.items.filter(i => i.name.toLowerCase().includes(q) && (state.planStore === 'All Stores' || i.stores.hasOwnProperty(state.planStore)));
 
-            if (state.sortMode === 'alpha') {
-                filtered.sort((a, b) => a.name.localeCompare(b.name)).forEach(item => listDiv.innerHTML += renderItemHTML(item));
+            if (state.groupMode === 'flat') {
+                // Pin Weekly, then sort everything else
+                const weekly = sortItems(filtered.filter(i => i.category === 'Weekly'));
+                const others = sortItems(filtered.filter(i => i.category !== 'Weekly'));
+                if (weekly.length) {
+                    listDiv.innerHTML += `<div class="bg-amber-50 px-3 py-1 border-y border-amber-100 text-[9px] font-black text-amber-600 uppercase tracking-widest">Weekly Pinned</div>`;
+                    weekly.forEach(item => listDiv.innerHTML += renderItemHTML(item));
+                }
+                others.forEach(item => listDiv.innerHTML += renderItemHTML(item));
             } else {
                 appData.categories.forEach(cat => {
-                    const catItems = filtered.filter(i => (i.category || 'Other') === cat);
+                    const catItems = sortItems(filtered.filter(i => (i.category || 'Other') === cat));
                     if (catItems.length === 0) return;
-                    listDiv.innerHTML += `<div class="bg-slate-50 px-3 py-1 border-y border-slate-100 text-[9px] font-black text-slate-400 uppercase tracking-widest">${cat}</div>`;
+                    const bg = cat === 'Weekly' ? 'bg-amber-50 text-amber-600' : 'bg-slate-50 text-slate-400';
+                    listDiv.innerHTML += `<div class="${bg} px-3 py-1 border-y border-slate-100 text-[9px] font-black uppercase tracking-widest">${cat}</div>`;
                     catItems.forEach(item => listDiv.innerHTML += renderItemHTML(item));
                 });
             }
@@ -249,57 +249,49 @@
 
         function renderItemHTML(item) {
             const isStriked = !item.needed || item.bought;
-            return `
-                <div class="flex justify-between items-center px-3 py-2 border-b border-slate-50 last:border-0 ${isStriked ? 'strikethrough' : ''}">
-                    <div class="flex-1 min-w-0 pr-2" onclick="handlePlanClick(${item.id})">
-                        <p class="font-semibold text-sm text-slate-700 truncate">${item.name}</p>
-                        <p class="text-[9px] text-slate-400 truncate">${Object.keys(item.stores).join(' • ')}</p>
-                    </div>
-                    <button onclick="openEditModal(${item.id})" class="text-slate-300 p-2"><i class="fa-solid fa-pen text-[10px]"></i></button>
+            return `<div class="flex justify-between items-center px-3 py-2 border-b border-slate-50 last:border-0 ${isStriked ? 'strikethrough' : ''}">
+                <div class="flex-1 min-w-0 pr-2" onclick="handlePlanClick(${item.id})">
+                    <p class="font-semibold text-sm text-slate-700 truncate">${item.name}</p>
+                    <p class="text-[9px] text-slate-400 truncate">${Object.keys(item.stores).join(' • ')}</p>
                 </div>
-            `;
+                <button onclick="openEditModal(${item.id})" class="text-slate-300 p-2"><i class="fa-solid fa-pen text-[10px]"></i></button>
+            </div>`;
         }
 
-        // --- SHOPPING & SETTINGS (Condensed from v10) ---
-        function renderShoppingView(container) {
-            container.innerHTML = `
-                <select onchange="state.shopStore=this.value; render()" class="w-full mb-3 p-3 rounded-lg shadow-sm border-none font-bold text-blue-600 bg-white text-sm">
-                    ${appData.stores.map(s => `<option value="${s}" ${state.shopStore===s?'selected':''}>${s}</option>`).join('')}
-                </select>
-                <div id="s-list" class="bg-white rounded-xl shadow-sm overflow-hidden border border-slate-200"></div>
-            `;
+        // --- SHOPPING ---
+        function renderShopping(container) {
+            container.innerHTML = `<select onchange="state.shopStore=this.value; render()" class="w-full mb-3 p-3 rounded-lg shadow-sm border-none font-bold text-blue-600 bg-white text-sm">
+                ${appData.stores.map(s => `<option value="${s}" ${state.shopStore===s?'selected':''}>${s}</option>`).join('')}
+            </select><div id="s-list" class="bg-white rounded-xl shadow-sm overflow-hidden border border-slate-200"></div>`;
             document.getElementById('store-indicator').innerText = state.shopStore;
-            let shopItems = appData.items.filter(i => i.needed && !i.bought && i.stores && i.stores.hasOwnProperty(state.shopStore));
-            shopItems.sort((a, b) => (a.stores[state.shopStore] || '').localeCompare(b.stores[state.shopStore] || '', undefined, {numeric: true}));
+            let shopItems = appData.items.filter(i => i.needed && !i.bought && i.stores.hasOwnProperty(state.shopStore));
+            
+            shopItems.sort((a, b) => {
+                if (a.category === 'Weekly' && b.category !== 'Weekly') return -1;
+                if (a.category !== 'Weekly' && b.category === 'Weekly') return 1;
+                return (a.stores[state.shopStore] || '').localeCompare(b.stores[state.shopStore] || '', undefined, {numeric: true});
+            });
+
             const sList = document.getElementById('s-list');
             shopItems.forEach(item => {
-                const el = document.createElement('div');
-                el.className = "flex justify-between items-center px-4 py-3 border-b border-slate-50 last:border-0 active:bg-slate-50";
-                el.innerHTML = `
+                const isWeekly = item.category === 'Weekly';
+                sList.innerHTML += `<div class="flex justify-between items-center px-4 py-3 border-b border-slate-50 last:border-0 active:bg-slate-50 ${isWeekly?'bg-amber-50/30':''}">
                     <div class="flex-1" onclick="markBought(${item.id})">
-                        <p class="font-bold text-sm text-slate-800">${item.name}</p>
-                        <p class="text-blue-500 text-[10px] font-bold uppercase"><i class="fa-solid fa-location-dot mr-1"></i>${item.stores[state.shopStore] || 'Update Aisle'}</p>
+                        <p class="font-bold text-sm text-slate-800">${item.name} ${isWeekly?'⭐':''}</p>
+                        <p class="text-blue-500 text-[10px] font-bold uppercase"><i class="fa-solid fa-location-dot mr-1"></i>${item.stores[state.shopStore] || 'Top'}</p>
                     </div>
                     <button onclick="openEditModal(${item.id})" class="text-slate-200 px-2"><i class="fa-solid fa-chevron-right"></i></button>
-                `;
-                sList.appendChild(el);
+                </div>`;
             });
-            if (shopItems.length === 0) sList.innerHTML = `<div class="text-center py-12 text-slate-400 text-xs font-medium">No items left!</div>`;
+            if (!shopItems.length) sList.innerHTML = `<div class="text-center py-12 text-slate-400 text-xs font-medium">Store Complete!</div>`;
         }
 
-        function renderSettingsView(container) {
-            container.innerHTML = `
-                <div class="space-y-4">
-                    <section class="bg-white p-3 rounded-xl shadow-sm border border-slate-200">
-                        <div class="flex justify-between items-center mb-3 text-sm font-bold">My Stores <button onclick="addStore()" class="text-blue-600 text-xs">+ Add Store</button></div>
-                        <div class="space-y-1">
-                            ${appData.stores.map(s => `<div class="flex justify-between items-center p-2 bg-slate-50 rounded border border-slate-100 text-xs font-semibold text-slate-600"><span>${s}</span><div class="flex"><button onclick="editStore('${s}')" class="text-slate-400 p-2"><i class="fa-solid fa-pen text-[10px]"></i></button><button onclick="removeStore('${s}')" class="text-red-300 p-2"><i class="fa-solid fa-trash text-[10px]"></i></button></div></div>`).join('')}
-                        </div>
-                    </section>
-                    <div class="grid grid-cols-2 gap-2"><button onclick="exportData()" class="bg-white p-3 rounded-xl shadow-sm font-bold text-slate-500 border border-slate-200 text-[10px]">Export</button><label class="bg-white p-3 rounded-xl shadow-sm font-bold text-slate-500 text-center border border-slate-200 text-[10px]">Import<input type="file" class="hidden" onchange="importData(event)"></label></div>
-                    <button onclick="if(confirm('Wipe all data?')) {appData=JSON.parse(JSON.stringify(DEFAULTS)); sync();}" class="w-full text-red-300 text-[9px] font-black uppercase py-8 tracking-widest">Reset Application</button>
-                </div>
-            `;
+        // --- SETTINGS ---
+        function renderSettings(container) {
+            container.innerHTML = `<div class="space-y-4">
+                <section class="bg-white p-3 rounded-xl shadow-sm border border-slate-200"><div class="flex justify-between items-center mb-3 text-sm font-bold">My Stores <button onclick="addStore()" class="text-blue-600 text-xs">+ Add</button></div><div class="space-y-1">
+                    ${appData.stores.map(s => `<div class="flex justify-between items-center p-2 bg-slate-50 rounded border border-slate-100 text-xs font-semibold text-slate-600"><span>${s}</span><div class="flex"><button onclick="editStore('${s}')" class="text-slate-400 p-2"><i class="fa-solid fa-pen text-[10px]"></i></button><button onclick="removeStore('${s}')" class="text-red-300 p-2"><i class="fa-solid fa-trash text-[10px]"></i></button></div></div>`).join('')}
+                </div></section><div class="grid grid-cols-2 gap-2"><button onclick="exportData()" class="bg-white p-3 rounded-xl shadow-sm font-bold text-slate-500 border border-slate-200 text-[10px]">Export</button><label class="bg-white p-3 rounded-xl shadow-sm font-bold text-slate-500 text-center border border-slate-200 text-[10px]">Import<input type="file" class="hidden" onchange="importData(event)"></label></div><button onclick="if(confirm('Wipe data?')){appData=JSON.parse(JSON.stringify(DEFAULTS));sync();}" class="w-full text-red-300 text-[9px] font-black uppercase py-8 tracking-widest">Reset App</button></div>`;
         }
 
         // --- STORE & MODAL HELPERS ---
@@ -328,12 +320,12 @@
             else { appData.items.push({ id: Date.now(), name, category: document.getElementById('edit-category').value, needed: true, bought: false, stores: storesObj }); }
             closeModal(); sync();
         }
-        function deleteItem() { if(!confirm("Delete forever?")) return; appData.items = appData.items.filter(i => i.id != document.getElementById('edit-id').value); closeModal(); sync(); }
+        function deleteItem() { if(!confirm("Delete?")) return; appData.items = appData.items.filter(i => i.id != document.getElementById('edit-id').value); closeModal(); sync(); }
         function addStore() { let s = prompt("Store name:"); if (s && !appData.stores.includes(s)) { appData.stores.push(s); sync(); }}
         function editStore(oldName) { let n = prompt("Rename:", oldName); if (!n || n === oldName) return; appData.stores[appData.stores.indexOf(oldName)] = n; appData.items.forEach(i => { if (i.stores && i.stores[oldName]) { i.stores[n] = i.stores[oldName]; delete i.stores[oldName]; }}); sync(); }
         function removeStore(s) { if (confirm(`Delete ${s}?`)) { appData.stores = appData.stores.filter(x => x !== s); appData.items.forEach(i => { if (i.stores) delete i.stores[s]; }); sync(); }}
         function exportData() { let blob = new Blob([JSON.stringify(appData)], {type:'application/json'}); let a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `grocery_backup.json`; a.click(); }
-        function importData(e) { let r = new FileReader(); r.onload = (ev) => { let i = JSON.parse(ev.target.result); appData = { items: i.items || [], stores: i.stores || DEFAULTS.stores, categories: i.categories || DEFAULTS.categories }; sync(); }; r.readAsText(e.target.files[0]); }
+        function importData(e) { let r = new FileReader(); r.onload = (ev) => { let i = JSON.parse(ev.target.result); appData = { items: i.items || [], stores: i.stores || DEFAULTS.stores, categories: DEFAULTS.categories }; sync(); }; r.readAsText(e.target.files[0]); }
 
         render();
     </script>
