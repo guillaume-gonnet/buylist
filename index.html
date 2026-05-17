@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Grocery Flow v13</title>
+    <title>Grocery Flow v14</title>
     
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -38,7 +38,7 @@
     </header>
 
     <main id="app-content" class="p-2 pb-32">
-        <!-- Content injected here -->
+        <!-- JS Content -->
     </main>
 
     <!-- UNDO SNACKBAR -->
@@ -96,14 +96,9 @@
         function loadData() {
             let saved = localStorage.getItem('grocery_pro_v6'); 
             let data = saved ? JSON.parse(saved) : JSON.parse(JSON.stringify(DEFAULTS));
-            
-            // Migration Logic
             data.categories = DEFAULTS.categories;
             data.items.forEach(item => {
-                // Consolidate all Produce variants into "Fruits and vegetables"
-                if (["Produce", "Fruits", "Vegetables"].includes(item.category)) {
-                    item.category = "Fruits and vegetables";
-                }
+                if (["Produce", "Fruits", "Vegetables"].includes(item.category)) item.category = "Fruits and vegetables";
                 if (!DEFAULTS.categories.includes(item.category)) item.category = "Other";
             });
             return data;
@@ -120,8 +115,8 @@
             shopStore: appData.stores[0] || '',
             planStore: 'All Stores',
             searchQuery: '',
-            groupMode: 'category', // 'category' or 'flat'
-            sortMode: 'status'     // 'status' or 'alpha'
+            groupMode: 'category',
+            sortMode: 'status'
         };
 
         function switchTab(tab) {
@@ -133,10 +128,15 @@
             render();
         }
 
-        // --- SORTING ENGINE ---
+        // --- SEARCH HELPERS ---
+        function clearSearch() {
+            state.searchQuery = '';
+            render();
+        }
+
+        // --- SORTING ---
         function sortItems(arr) {
             return arr.sort((a, b) => {
-                // Status mode puts "Needed & Not Bought" items at the top of the group
                 if (state.sortMode === 'status') {
                     const statusA = (a.needed && !a.bought) ? 0 : 1;
                     const statusB = (b.needed && !b.bought) ? 0 : 1;
@@ -150,13 +150,8 @@
         function handlePlanClick(id) {
             const item = appData.items.find(i => i.id === id);
             const copy = JSON.parse(JSON.stringify(item));
-            if (item.needed && !item.bought) { 
-                item.needed = false; item.bought = false; 
-                showUndoSnackbar(`Removed ${item.name}`, copy); 
-            } else { 
-                item.needed = true; item.bought = false; 
-                showUndoSnackbar(`Added ${item.name}`, copy); 
-            }
+            if (item.needed && !item.bought) { item.needed = false; item.bought = false; showUndoSnackbar(`Removed ${item.name}`, copy); }
+            else { item.needed = true; item.bought = false; showUndoSnackbar(`Added ${item.name}`, copy); }
             sync();
         }
 
@@ -200,8 +195,10 @@
                     <div class="relative shadow-sm">
                         <i class="fa-solid fa-magnifying-glass absolute left-3 top-2.5 text-slate-300 text-sm"></i>
                         <input type="text" id="search-input" value="${state.searchQuery}" oninput="state.searchQuery=this.value; renderPlanningList()" 
-                            class="w-full p-2 pl-9 pr-8 rounded-lg border-none shadow-sm outline-none text-sm" placeholder="Search...">
-                        <button onclick="state.searchQuery=''; render();" class="${state.searchQuery ? '' : 'hidden'} absolute right-3 top-2.5 text-slate-300"><i class="fa-solid fa-circle-xmark"></i></button>
+                            class="w-full p-2 pl-9 pr-8 rounded-lg border-none outline-none text-sm" placeholder="Search...">
+                        <button onclick="clearSearch()" class="${state.searchQuery ? '' : 'hidden'} absolute right-3 top-2.5 text-slate-300">
+                            <i class="fa-solid fa-circle-xmark"></i>
+                        </button>
                     </div>
                     <div class="grid grid-cols-3 gap-1">
                         <select onchange="state.planStore=this.value; renderPlanningList()" class="p-1.5 rounded-lg border-none shadow-sm font-bold text-blue-600 bg-white text-[9px]">
@@ -228,7 +225,6 @@
             let filtered = appData.items.filter(i => i.name.toLowerCase().includes(q) && (state.planStore === 'All Stores' || i.stores.hasOwnProperty(state.planStore)));
 
             if (state.groupMode === 'flat') {
-                // Pin Weekly, then sort everything else
                 const weekly = sortItems(filtered.filter(i => i.category === 'Weekly'));
                 const others = sortItems(filtered.filter(i => i.category !== 'Weekly'));
                 if (weekly.length) {
@@ -239,7 +235,7 @@
             } else {
                 appData.categories.forEach(cat => {
                     const catItems = sortItems(filtered.filter(i => (i.category || 'Other') === cat));
-                    if (catItems.length === 0) return;
+                    if (!catItems.length) return;
                     const bg = cat === 'Weekly' ? 'bg-amber-50 text-amber-600' : 'bg-slate-50 text-slate-400';
                     listDiv.innerHTML += `<div class="${bg} px-3 py-1 border-y border-slate-100 text-[9px] font-black uppercase tracking-widest">${cat}</div>`;
                     catItems.forEach(item => listDiv.innerHTML += renderItemHTML(item));
@@ -258,7 +254,6 @@
             </div>`;
         }
 
-        // --- SHOPPING ---
         function renderShopping(container) {
             container.innerHTML = `<select onchange="state.shopStore=this.value; render()" class="w-full mb-3 p-3 rounded-lg shadow-sm border-none font-bold text-blue-600 bg-white text-sm">
                 ${appData.stores.map(s => `<option value="${s}" ${state.shopStore===s?'selected':''}>${s}</option>`).join('')}
@@ -278,7 +273,7 @@
                 sList.innerHTML += `<div class="flex justify-between items-center px-4 py-3 border-b border-slate-50 last:border-0 active:bg-slate-50 ${isWeekly?'bg-amber-50/30':''}">
                     <div class="flex-1" onclick="markBought(${item.id})">
                         <p class="font-bold text-sm text-slate-800">${item.name} ${isWeekly?'⭐':''}</p>
-                        <p class="text-blue-500 text-[10px] font-bold uppercase"><i class="fa-solid fa-location-dot mr-1"></i>${item.stores[state.shopStore] || 'Top'}</p>
+                        <p class="text-blue-500 text-[10px] font-bold uppercase"><i class="fa-solid fa-location-dot mr-1"></i>${item.stores[state.shopStore] || 'Update Aisle'}</p>
                     </div>
                     <button onclick="openEditModal(${item.id})" class="text-slate-200 px-2"><i class="fa-solid fa-chevron-right"></i></button>
                 </div>`;
@@ -286,7 +281,6 @@
             if (!shopItems.length) sList.innerHTML = `<div class="text-center py-12 text-slate-400 text-xs font-medium">Store Complete!</div>`;
         }
 
-        // --- SETTINGS ---
         function renderSettings(container) {
             container.innerHTML = `<div class="space-y-4">
                 <section class="bg-white p-3 rounded-xl shadow-sm border border-slate-200"><div class="flex justify-between items-center mb-3 text-sm font-bold">My Stores <button onclick="addStore()" class="text-blue-600 text-xs">+ Add</button></div><div class="space-y-1">
@@ -294,7 +288,6 @@
                 </div></section><div class="grid grid-cols-2 gap-2"><button onclick="exportData()" class="bg-white p-3 rounded-xl shadow-sm font-bold text-slate-500 border border-slate-200 text-[10px]">Export</button><label class="bg-white p-3 rounded-xl shadow-sm font-bold text-slate-500 text-center border border-slate-200 text-[10px]">Import<input type="file" class="hidden" onchange="importData(event)"></label></div><button onclick="if(confirm('Wipe data?')){appData=JSON.parse(JSON.stringify(DEFAULTS));sync();}" class="w-full text-red-300 text-[9px] font-black uppercase py-8 tracking-widest">Reset App</button></div>`;
         }
 
-        // --- STORE & MODAL HELPERS ---
         function openEditModal(id = null) {
             const modal = document.getElementById('edit-modal');
             document.getElementById('edit-category').innerHTML = appData.categories.map(c => `<option value="${c}">${c}</option>`).join('');
